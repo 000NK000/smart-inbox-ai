@@ -1,0 +1,47 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: smart-collector
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yaml
+  mail:
+    host: imap.gmail.com
+    username: ${GMAIL_EMAIL:}
+    password: ${GMAIL_APP_PASSWORD:}
+    protocol: imap
+    properties:
+      mail:
+        imap:
+          ssl:
+            enable: true
+
+rocketmq:
+  name-server: 127.0.0.1:9876
+  producer:
+    group: email-collector-group
+    send-message-timeout: 60000
+    retry-times-when-send-async-failed: 2
+    access-key: ${ROCKETMQ_ACCESS_KEY:}
+    secret-key: ${ROCKETMQ_SECRET_KEY:}
+
+email:
+  qq:
+    host: imap.qq.com
+    username: ${QQ_EMAIL:}
+    password: ${QQ_AUTH_CODE:}
+
+outlook:
+  tenant: organizations
+  username: ${OUTLOOK_EMAIL:}
+  client-id: ${OUTLOOK_CLIENT_ID:}
+
+smart:
+  credentials:
+    management-password-sha256: ${SMART_INBOX_MANAGEMENT_PASSWORD_SHA256:}

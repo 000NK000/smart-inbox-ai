@@ -1,0 +1,91 @@
+server:
+  port: 8083
+
+logging:
+  level:
+    com.smartinbox: DEBUG
+    org.apache.rocketmq: DEBUG
+
+spring:
+  application:
+    name: smart-processor
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yaml
+  datasource:
+    url: jdbc:h2:file:./data/smart_inbox;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ${H2_PASSWORD:}
+    driver-class-name: org.h2.Driver
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6380
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      connect-timeout: 2000ms
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+  ai:
+    openai:
+      retry:
+        max-attempts: 2
+        backoff:
+           delay: 1000
+           max-delay: 2000
+      # base-url for Ollama Local (Spring AI 0.8.1 auto-appends path)
+      base-url: http://localhost:11434
+      # Increase timeouts for large local models
+      connection-timeout: 60s
+      read-timeout: 300s
+      # No API key needed for local
+      api-key: ollama
+      chat:
+        options:
+          # Qwen 3.5 9B Q8: bilingual quality with full GPU offload on 16GB VRAM
+          model: qwen3.5:9b-q8_0
+      embedding:
+        options:
+          # Keep embedding small or use a local one if available, but for now let's assume local or fallback
+          # Ideally, you should also pull an embedding model like 'nomic-embed-text'
+          model: text-embedding-3-small
+#    vectorstore:
+#      milvus:
+#        client:
+#          host: localhost
+#          port: 19530
+#        embedding-dimension: 1536
+#        collection-name: email_vector_store
+
+rocketmq:
+  name-server: 127.0.0.1:9876
+  nameServer: 127.0.0.1:9876 # CamelCase alias often required by some versions
+  consumer:
+    group: email-processor-group-v4
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+smart:
+  rag:
+    enabled: false
+  mq:
+    email:
+      enabled: true   # ✅ 打开 MQ Consumer
+  http:
+    ingest:
+      enabled: false  # ✅ 关闭 HTTP ingestion，防双通道

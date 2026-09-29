@@ -1,0 +1,27 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: smart-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yaml
+    gateway:
+      routes:
+        - id: smart-processor-route
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/mails/**, /api/chat/**, /api/dashboard/**, /api/tasks/**, /api/focus, /api/focus/**
+        - id: smart-collector-credentials-route
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/credentials/**
+        - id: smart-collector-outlook-route
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/outlook/**
