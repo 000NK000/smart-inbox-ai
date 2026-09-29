@@ -8,7 +8,17 @@ Built with **Java 17, Spring Boot, Spring Cloud Gateway, RocketMQ, Redis, Spring
 
 **Project scope:** a working, single-user application for a trusted local computer. The services run as separate processes; this repository does not claim a production cloud deployment, multi-tenant security, or measured production-scale throughput.
 
-[Screenshots](#screenshots) · [Try the UI](#try-the-ui-no-accounts-needed) · [Features](#features) · [Architecture](#architecture) · [Run locally](#run-locally-windows) · [Tests](#tests)
+[Video walkthrough](#video-walkthrough) · [Screenshots](#screenshots) · [Try the UI](#try-the-ui-no-accounts-needed) · [Features](#features) · [Architecture](#architecture) · [Run locally](#run-locally-windows) · [Tests](#tests)
+
+## Video walkthrough
+
+**75 seconds · English captions · 1080p · No audio**
+
+[![Preview of the Smart Inbox AI walkthrough with fictional sample data](docs/images/demo-preview.gif)](https://github.com/000NK000/smart-inbox-ai/raw/refs/heads/main/docs/demo/smart-inbox-demo.mp4)
+
+**[Watch or download the full video (MP4, 2.5 MB)](https://github.com/000NK000/smart-inbox-ai/raw/refs/heads/main/docs/demo/smart-inbox-demo.mp4)** · [English subtitles](docs/demo/smart-inbox-demo.en.srt) · [Chapters & recording notes](docs/demo/README.md)
+
+An edited walkthrough of the actual English UI: dashboard → mail filters and search → full message → job applications and suggested next steps. Every scene uses **fictional sample data** in the isolated, read-only demo. Recruiting suggestions are preloaded examples; the video does not connect to real accounts, run live AI, or demonstrate write actions.
 
 ## Try the UI (no accounts needed)
 
