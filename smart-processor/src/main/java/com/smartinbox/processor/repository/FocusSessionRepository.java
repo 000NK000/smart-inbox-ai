@@ -9,6 +9,7 @@ import java.util.Optional;
 
 public interface FocusSessionRepository extends JpaRepository<FocusSession, String> {
     Optional<FocusSession> findFirstByEndedAtIsNullOrderByStartedAtDesc();
+    List<FocusSession> findByEndedAtIsNullOrderByStartedAtDesc();
     @Query("select s from FocusSession s where s.startedAt < :end and (s.endedAt is null or s.endedAt > :start)")
     List<FocusSession> overlapping(@Param("start") long start, @Param("end") long end);
 }

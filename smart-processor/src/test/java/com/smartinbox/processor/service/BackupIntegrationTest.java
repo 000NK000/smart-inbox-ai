@@ -111,6 +111,21 @@ class BackupIntegrationTest {
         assertEquals(2,tasks.findById(task.getId()).orElseThrow().getRescheduleCount());
         assertEquals("300",settings.findById("entertainmentDailyLimitMinutes").orElseThrow().getValue());
     }
+    @Test void twoStateFocusBackupKeepsConfirmedTimeWithoutRuntimeLease() throws Exception {
+        long now=System.currentTimeMillis();
+        var effective=new FocusSession();effective.setId(UUID.randomUUID().toString());effective.setCategory("EFFECTIVE");
+        effective.setStartedAt(now-180000);effective.setLastHeartbeatAt(now-120000);effective.setRuntimeId("test-runtime");
+        var ineffective=new FocusSession();ineffective.setId(UUID.randomUUID().toString());ineffective.setCategory("INEFFECTIVE");
+        ineffective.setStartedAt(now-300000);ineffective.setEndedAt(now-240000);
+        focusSessions.saveAllAndFlush(List.of(effective,ineffective));
+        String json=mapper.writeValueAsString(backups.export());
+        assertFalse(json.contains("test-runtime"));assertFalse(json.contains("lastHeartbeatAt"));
+        var file=mapper.readValue(json,BackupService.Envelope.class);
+        assertEquals(now-120000,file.payload().focusSessions().stream().filter(s->s.getCategory().equals("EFFECTIVE")).findFirst().orElseThrow().getEndedAt());
+        focusSessions.deleteAll();backups.restore(file);
+        assertEquals(Set.of("EFFECTIVE","INEFFECTIVE"),focusSessions.findAll().stream().map(FocusSession::getCategory).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(focusSessions.findAll().stream().allMatch(s->s.getEndedAt()!=null&&s.getRuntimeId()==null&&s.getLastHeartbeatAt()==null));
+    }
     @Test void groupNotesRoundtripAndLegacySchemaFiveRemainValid() throws Exception {
         var group = new PracticeGroup(); group.setName("动态规划"); group.setNote("先定义状态和转移"); practiceGroups.saveAndFlush(group);
         var exported = backups.export();

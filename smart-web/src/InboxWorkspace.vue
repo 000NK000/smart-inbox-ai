@@ -1,7 +1,10 @@
 <template>
+  <div v-if="mobile && page === 'home'" class="mobile-online" role="status"><span aria-hidden="true"></span>{{ t('已连接你的电脑') }}</div>
   <MainDashboard
     v-if="page === 'home'"
+    ref="workspaceRoot"
     :weather="weatherView"
+    :mobile="mobile"
     :trend-platforms="trendPlatforms"
     :world-news="worldNews"
     :watch-data="watchData"
@@ -13,11 +16,11 @@
     @navigate="navigate"
   ><template #standby><slot name="standby" /></template></MainDashboard>
 
-  <div v-else class="workspace-shell">
+  <div v-else ref="workspaceRoot" class="workspace-shell">
     <header class="workspace-header">
-      <button class="home-button" type="button" @click="navigate('home')"><span>‹</span> {{ t("主菜单") }}</button>
+      <button class="home-button" type="button" :aria-label="t('主菜单')" :title="t('主菜单')" @click="navigate('home')"><span class="home-button-icon" aria-hidden="true">‹</span><span class="home-button-label">{{ t("主菜单") }}</span></button>
       <div class="page-identity"><span>{{ pageEyebrow }}</span><strong>{{ pageTitle }}</strong></div>
-      <div class="header-status"><span class="online-dot"></span><span>{{ t("Smart Inbox 在线") }}</span></div>
+      <div class="header-status" role="status" :title="mobile ? t('已连接你的电脑') : t('Smart Inbox 在线')"><span class="online-dot" aria-hidden="true"></span><span class="header-status-label">{{ mobile ? t('已连接你的电脑') : t('Smart Inbox 在线') }}</span></div>
     </header>
 
     <main class="workspace-content">
@@ -45,14 +48,15 @@
         </div>
         <MailTaskPlan v-if="page === 'mail' && mailView === 'PLAN'" :key="mailPlanRevision" @open-mail="openMailDetail" />
         <template v-else>
-        <div v-if="page === 'mail' && (mailChannel === 'OUTLOOK' || mailChannel === 'ALL') && outlookStatus.connected === false && !outlookSyncing && !outlookStatus.sync?.syncing && outlookStatus.desktopState !== 'starting'" class="mail-source-notice">
+        <div v-if="!mobile && page === 'mail' && (mailChannel === 'OUTLOOK' || mailChannel === 'ALL') && outlookStatus.connected === false && !outlookSyncing && !outlookStatus.sync?.syncing && (outlookStatus.sync?.failureCode || outlookStatus.desktopState) !== 'starting'" class="mail-source-notice">
           <div><strong>{{ t("Outlook 当前未连接") }}</strong><span>{{ outlookStatusMessage }} {{ t("当前列表显示的是历史缓存，不能代表 Outlook 的实时收件情况。") }}</span></div>
           <button type="button" @click="navigate('credentials')">{{ t("前往连接设置") }}</button>
         </div>
 
         <div v-if="page === 'mail'" class="mail-sync-status" role="status">
           <span v-if="mailView === 'INBOX'">{{ t("最近 120 小时 · 包含原邮箱已读邮件 · 仅在此处标为已读后移出") }}</span>
-          <span>{{ outlookSyncing || outlookStatus.sync?.syncing ? t('正在检查 Outlook 新邮件…') : outlookStatus.connected ? t('Outlook 已连接 · 每分钟自动检查') : t('Outlook 等待连接，将自动重试') }}</span>
+          <span v-if="mobile">{{ t('邮件采集在电脑运行；刷新只重新读取电脑已同步的内容。') }}</span>
+          <span v-else>{{ outlookSyncing || outlookStatus.sync?.syncing ? t('正在检查 Outlook 新邮件…') : outlookStatus.connected ? t('Outlook 已连接 · 每分钟自动检查') : t('Outlook 等待连接，将自动重试') }}</span>
           <span v-if="outlookStatus.sync?.lastSuccess">{{ t("最近成功同步：") }}{{ formatTime(outlookStatus.sync.lastSuccess) }}</span>
         </div>
         <div v-if="mailLoading" class="center-state"><el-icon class="is-loading"><Loading /></el-icon><span>{{ t("AI 正在整理邮件…") }}</span></div>
@@ -87,13 +91,15 @@
       <JobApplicationCenter v-else-if="page === 'applications'" @open-mail="openMailDetail" />
       <FocusCenter v-else-if="page === 'focus'" />
       <PracticeCenter v-else-if="page === 'practice'" />
-      <OperationsPanel v-else-if="page === 'operations'" @restored="onRestored" />
+      <StocksCenter v-else-if="page === 'stocks'" :mobile="mobile" />
+      <MobileConnectionPanel v-else-if="!mobile && page === 'mobile-connection'" />
+      <OperationsPanel v-else-if="!mobile && page === 'operations'" @restored="onRestored" />
       <WeatherPanel v-else-if="page === 'weather'" :weather="weatherView" :locations="availableLocations" :location-key="locationKey" :analysis="rainAnalysis" :analysis-loading="rainAnalysisLoading" :locating="locating" @location-change="changeLocation" @request-location="detectLocation" />
       <SocialTrendsPanel v-else-if="page === 'social-trends'" :platforms="trendPlatforms" :loading="trendsLoading" @refresh="fetchTrends(true)" />
       <UsNewsPanel v-else-if="page === 'world-news'" :combined="worldNews" :sources="usNewsSources" :loading="usNewsLoading" @refresh="fetchUsNews(true)" />
       <HotspotCenterPanel v-else-if="page === 'hotspot-center'" :platforms="trendPlatforms" :world-news="worldNews" :loading="trendsLoading || usNewsLoading" @navigate="navigate" @refresh="refreshHotspotCenter" />
       <WatchCenterPanel v-else-if="page === 'watch-center'" :movies="watchData.movies" :tv-shows="watchData.tvShows" :sources="watchData.sources" :loading="watchLoading" @refresh="fetchWatch(true)" />
-      <section v-else-if="page === 'credentials'" class="credentials-workspace"><CredentialManager /></section>
+      <section v-else-if="!mobile && page === 'credentials'" class="credentials-workspace"><CredentialManager /></section>
     </main>
   </div>
 
@@ -142,13 +148,15 @@
       </template>
     </section>
   </div>
+  <div v-if="focusShortcutNotice && page !== 'focus'" class="focus-shortcut-notice" :class="focusShortcutNotice.category?.toLowerCase()" role="status" aria-live="polite">{{ t(focusShortcutNotice.message, { category: t(focusShortcutNotice.category === 'EFFECTIVE' ? '有效时间' : '无效时间') }) }}</div>
 </template>
 
 <script setup>
 import { useI18n } from './i18n/index.js'
+const props = defineProps({ mobile: { type: Boolean, default: false } })
 const { t, dateLocale } = useI18n()
 import { ElSwitch, ElIcon } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -169,10 +177,29 @@ const CalendarCenter = createAsyncPanel(() => import('./components/CalendarCente
 const JobApplicationCenter = createAsyncPanel(() => import('./components/JobApplicationCenter.vue'))
 const FocusCenter = createAsyncPanel(() => import('./components/FocusCenter.vue'))
 const PracticeCenter = createAsyncPanel(() => import('./components/PracticeCenter.vue'))
+const StocksCenter = createAsyncPanel(() => import('./components/StocksCenter.vue'))
+const MobileConnectionPanel = createAsyncPanel(() => import('./components/MobileConnectionPanel.vue'))
 const OperationsPanel = createAsyncPanel(() => import('./components/OperationsPanel.vue'))
 import { useTaskStore } from './stores/taskStore'
 import { ElNotification, ElMessageBox } from 'element-plus'
 import { readPreview, savePreview } from './utils/previewCache'
+import { createFocusController, focusControllerKey } from './stores/focusController.js'
+import { installFocusShortcut } from './utils/focusShortcut.js'
+
+const focusController = createFocusController(axios, Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Toronto')
+provide(focusControllerKey, focusController)
+const workspaceRoot = ref(null), focusShortcutNotice = ref(null)
+let removeFocusShortcut, focusNoticeTimer
+function focusShortcutEnabled() {
+  const root = workspaceRoot.value?.$el || workspaceRoot.value
+  return !disposed && !!root && !root.closest?.('[inert]')
+}
+function showFocusShortcutNotice(result) {
+  clearTimeout(focusNoticeTimer)
+  if (result.status === 'ignored') { focusShortcutNotice.value = null; return }
+  focusShortcutNotice.value = { ...result, message: result.status === 'switched' ? '已切换为「{category}」' : result.message }
+  if (result.status) focusNoticeTimer = setTimeout(() => { focusShortcutNotice.value = null }, 5000)
+}
 
 const locations = [
   { key: 'waterloo', name: 'Waterloo · 滑铁卢', latitude: 43.4643, longitude: -80.5204 },
@@ -256,15 +283,18 @@ const dateLabel = computed(() => new Intl.DateTimeFormat(dateLocale.value, { mon
 const availableLocations = computed(() => detectedLocation.value ? [detectedLocation.value, ...locations] : locations)
 const activeLocation = computed(() => availableLocations.value.find(item => item.key === locationKey.value) || locations[0])
 
-const pageTitle = computed(() => ({ practice: t('刷题进度与熟练度'), focus: t('专注与每周复盘'), applications: t('求职与申请中心'), calendar: t('日历与课程中心'), today: t('今日安排'), operations: t('运行与备份'), mail: t('邮件'), tasks: t('任务管理'), weather: t('今日天气'), 'hotspot-center': t('热点中心'), 'social-trends': t('平台热榜'), 'world-news': t('美国媒体热榜'), 'watch-center': t('追剧中心'), credentials: t('密钥管理') }[page.value] || 'Smart Inbox'))
-const pageEyebrow = computed(() => ({ practice: 'JAVA · INTERVIEW PREP', focus: 'FOCUS & REVIEW', applications: 'CAREER PIPELINE', calendar: 'CALENDAR', today: 'TODAY', operations: 'SYSTEM', mail: 'INBOX', tasks: 'REMINDERS', weather: 'WEATHER', 'hotspot-center': 'TRENDS & NEWS', 'social-trends': 'SOCIAL TRENDS', 'world-news': 'U.S. MEDIA', 'watch-center': 'DOUBAN × IMDb × RT', credentials: 'LOCAL VAULT' }[page.value] || 'SMART INBOX'))
+const pageTitle = computed(() => ({ 'mobile-connection': t('手机连接'), stocks: t('股票中心'), practice: t('刷题进度与熟练度'), focus: t('专注与每周复盘'), applications: t('求职与申请中心'), calendar: t('日历与课程中心'), today: t('今日安排'), operations: t('运行与备份'), mail: t('邮件'), tasks: t('任务管理'), weather: t('今日天气'), 'hotspot-center': t('热点中心'), 'social-trends': t('平台热榜'), 'world-news': t('美国媒体热榜'), 'watch-center': t('追剧中心'), credentials: t('密钥管理') }[page.value] || 'Smart Inbox'))
+const pageEyebrow = computed(() => ({ 'mobile-connection': 'PRIVATE MOBILE ACCESS', stocks: 'PORTFOLIO & RESEARCH', practice: 'JAVA · INTERVIEW PREP', focus: 'FOCUS & REVIEW', applications: 'CAREER PIPELINE', calendar: 'CALENDAR', today: 'TODAY', operations: 'SYSTEM', mail: 'INBOX', tasks: 'REMINDERS', weather: 'WEATHER', 'hotspot-center': 'TRENDS & NEWS', 'social-trends': 'SOCIAL TRENDS', 'world-news': 'U.S. MEDIA', 'watch-center': 'DOUBAN × IMDb × RT', credentials: 'LOCAL VAULT' }[page.value] || 'SMART INBOX'))
 const outlookStatusMessage = computed(() => {
-  if (outlookStatus.value.desktopState === 'offline') return t('经典 Outlook 处于离线模式，请恢复网络并关闭脱机工作。')
-  if (outlookStatus.value.desktopState === 'timeout') return t('读取 Outlook 超时，系统会自动重试。')
-  if (outlookStatus.value.desktopState === 'unavailable') return t('无法访问本机经典 Outlook，请用 start_all.bat 启动项目并确认 Outlook 账号仍已登录。')
-  if (outlookStatus.value.desktopState === 'sync_failed') return t('同步未完成，系统会自动重试；请确认消息队列及本地数据目录可用。')
-  if (outlookStatus.value.desktopState === 'no_profile') return t('采集器没有检测到经典 Outlook 配置，Waterloo 的 Microsoft API 授权也尚未完成。')
-  if (outlookStatus.value.desktopState === 'account_not_found') return t('经典 Outlook 中没有找到 mailbox@example.com。')
+  const state = outlookStatus.value.sync?.failureCode || outlookStatus.value.desktopState
+  if (state === 'offline') return t('经典 Outlook 处于离线模式，请恢复网络并关闭脱机工作。')
+  if (state === 'timeout') return t('读取 Outlook 超时，系统会自动重试。')
+  if (state === 'unavailable') return t('无法访问本机经典 Outlook，请用 start_all.bat 启动项目并确认 Outlook 账号仍已登录。')
+  if (state === 'sync_failed' || state === 'desktop_sync_failed') return t('同步未完成，系统会自动重试；请确认消息队列及本地数据目录可用。')
+  if (state === 'profile_required') return t('请在经典 Outlook 中选择已有的邮箱配置，并设为默认配置；完成一次选择后，系统会自动重试同步。')
+  if (state === 'no_profile') return t('经典 Outlook 尚未设置可用的默认邮箱配置，请先在电脑上打开 Outlook 并完成配置。')
+  if (state === 'starting') return t('经典 Outlook 正在启动，请稍候；系统会自动重试同步。')
+  if (state === 'account_not_found') return t('经典 Outlook 中没有找到 mailbox@example.com。')
   if (outlookStatus.value.configured) return t('Microsoft 应用已经配置，但账号授权尚未完成。')
   return t('尚未配置可用的 Microsoft 连接。')
 })
@@ -301,6 +331,7 @@ const weatherView = computed(() => {
 })
 
 function navigate(destination) {
+  if (props.mobile && ['operations', 'credentials', 'mobile-connection'].includes(destination)) return
   mailRequestId++
   mailLoading.value = false
   currentMailPage.value = 0; mailVersion = ''
@@ -376,6 +407,7 @@ async function fetchSummaries(silent = false, append = false) {
 }
 
 async function loadOutlookStatus() {
+  if (props.mobile) return outlookStatus.value
   try { outlookStatus.value = (await axios.get('/api/outlook/status')).data }
   catch { outlookStatus.value = { connected: false, configured: false, desktopState: 'unavailable' } }
   return outlookStatus.value
@@ -386,6 +418,7 @@ function loadMoreMail() {
 }
 
 async function syncOutlook(force = false) {
+  if (props.mobile) return
   if (outlookSyncing.value || (!force && Date.now() - mailboxOpeningSync < 30000)) return
   mailboxOpeningSync = Date.now()
   outlookSyncing.value = true
@@ -400,6 +433,7 @@ async function syncOutlook(force = false) {
   }
 }
 async function refreshMailbox() {
+  if (props.mobile) return fetchSummaries()
   if (page.value !== 'mail') return fetchSummaries()
   await syncOutlook(true)
   await fetchSummaries()
@@ -701,6 +735,8 @@ watch([blockAd, searchHours, searchStarred], () => { mailVersion=''; if (page.va
 watch(blockAd, value => { if(reminderSettingsReady) axios.put('/api/dashboard/preferences', {mailBlockAd:String(value)}).catch(()=>{}) })
 watch(locationKey, value => { if(reminderSettingsReady && value!=='detected') axios.put('/api/dashboard/preferences', {weatherLocation:value}).catch(()=>{}) })
 onMounted(async () => {
+  removeFocusShortcut = installFocusShortcut({ window, document, controller: focusController, isEnabled: focusShortcutEnabled,
+    onPending: () => showFocusShortcutNotice({ message: '正在切换计时…' }), onResult: showFocusShortcutNotice })
   trendPlatforms.value=readPreview('trends') || []
   worldNews.value=readPreview('news') || []
   watchData.value=readPreview('watch') || watchData.value
@@ -711,30 +747,40 @@ onMounted(async () => {
   clockTimer=setInterval(() => {now.value=new Date()},30000)
   reminderTimer=setInterval(pollReminders,60000)
   document.addEventListener('visibilitychange',onVisibility)
+  window.addEventListener('smart-inbox:mobile-resume',onVisibility)
   await loadPreferences()
   if(disposed) return
   detectLocation(); pollReminders()
 })
 onBeforeUnmount(() => {
+  removeFocusShortcut?.(); focusController.dispose(); clearTimeout(focusNoticeTimer)
   disposed=true; mailRequestId++; weatherRequestId++; rainRequestId++; detailRequestId++; insightRequestId++
   clearInterval(mailPollTimer); clearInterval(clockTimer); clearInterval(reminderTimer)
   document.removeEventListener('visibilitychange',onVisibility)
+  window.removeEventListener('smart-inbox:mobile-resume',onVisibility)
 })
 </script>
 
 <style scoped>
+.focus-shortcut-notice { position: fixed; z-index: 2100; top: calc(22px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 40px); box-sizing: border-box; padding: 13px 20px; border: 1px solid #dce4ed; border-radius: 14px; background: #fff; color: #263b55; box-shadow: 0 8px 30px #233b5733; font-size: 14px; font-weight: 700; pointer-events: none; }
+.focus-shortcut-notice.effective { border-color: #ff0000; background: #ff0000; color: #230000; }
+.focus-shortcut-notice.ineffective { border-color: #008000; background: #008000; color: #fff; }
+.mobile-online { display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 10px max(18px, env(safe-area-inset-left)); background: #eaf2ee; color: #42675a; font-size: 11px; }
+.mobile-online > span { width: 6px; height: 6px; background: #53a57f; border-radius: 50%; }
 .mail-search{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 20px;color:#647187;font-size:13px}.mail-search form{display:flex;gap:8px;flex:1;min-width:240px}.mail-search input:not([type=checkbox]){flex:1;min-width:100px}.mail-search input,.mail-search select,.mail-search button{border:1px solid #dbe4ef;border-radius:10px;padding:9px 12px;background:#fff;color:#315781}.inbox-tabs{flex-wrap:wrap}
 .mail-sync-status{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 16px;color:#73839a;font-size:12px}
 .workspace-shell { min-height: 100vh; color: #1c2739; background: radial-gradient(circle at 0 0, rgba(122,184,255,.28), transparent 30rem), linear-gradient(145deg,#eef4fa,#e8edf4); }
 .workspace-header { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; min-height: 78px; padding: 12px clamp(16px,4vw,56px); border-bottom: 1px solid rgba(255,255,255,.76); background: rgba(246,249,252,.76); box-shadow: 0 8px 28px rgba(57,70,94,.06); backdrop-filter: blur(22px); }
 .home-button { justify-self: start; border: 1px solid rgba(99,120,151,.18); border-radius: 13px; padding: 10px 14px; color: #2766c7; font-weight: 800; background: rgba(255,255,255,.76); box-shadow: 0 6px 18px rgba(59,77,105,.07); }
-.home-button span { margin-right: 4px; font-size: 22px; line-height: 0; vertical-align: -2px; }
+.home-button-icon { margin-right: 4px; font-size: 22px; line-height: 0; vertical-align: -2px; }
 .page-identity { display: grid; justify-items: center; }
 .page-identity span { color: #8d98a9; font-size: 9px; font-weight: 900; letter-spacing: .16em; }
 .page-identity strong { font-size: 18px; }
 .header-status { display: flex; justify-self: end; align-items: center; gap: 7px; color: #7d8798; font-size: 11px; }
 .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #21b46b; box-shadow: 0 0 0 4px rgba(33,180,107,.11); }
 .workspace-content { min-height: calc(100vh - 78px); padding: clamp(24px,4vw,52px); }
+.workspace-content:has(.focus-center[data-focus-state="INEFFECTIVE"]) { background: #008000; --focus-state-ink: #fff; }
+.workspace-content:has(.focus-center[data-focus-state="EFFECTIVE"]) { background: #ff0000; --focus-state-ink: #230000; }
 .mail-workspace, .credentials-workspace { width: min(1120px, 100%); margin: 0 auto; }
 .mail-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
 .mail-source-notice { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: -6px 0 20px; padding: 16px 18px; border: 1px solid #f0d9a8; border-radius: 18px; background: rgba(255,248,230,.9); color: #6f5b31; }
@@ -819,9 +865,6 @@ onBeforeUnmount(() => {
 .mail-full-content > p { margin: 10px 0 0; color: #303b4e; font-size: 13px; line-height: 1.78; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mail-full-content small { display: block; margin-top: 15px; padding-top: 12px; border-top: 1px solid #edf0f4; color: #9a7b42; font-size: 10px; line-height: 1.5; }
 @media (max-width: 760px) {
-  .workspace-header { grid-template-columns: auto 1fr; }
-  .page-identity { justify-items: end; }
-  .header-status { display: none; }
   .workspace-content { padding: 22px 14px; }
   .mail-toolbar { align-items: stretch; flex-direction: column; }
   .mail-source-notice { align-items: flex-start; flex-direction: column; }
@@ -837,5 +880,19 @@ onBeforeUnmount(() => {
   .mail-detail-actions,.mail-insight-card,.mail-full-content { margin-right: 18px; margin-left: 18px; }
   .mail-insight-heading { align-items: flex-start; }
   .mail-detail-actions { padding-right: 0; padding-left: 0; flex-wrap: wrap; }
+}
+/* One compact navigation bar owns the safe area on phone subpages. */
+@media (max-width: 760px), (max-width: 960px) and (pointer: coarse), (max-width: 960px) and (max-height: 500px) {
+  .workspace-header { grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 8px; min-height: calc(64px + env(safe-area-inset-top)); padding: calc(10px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left)); background: rgba(239,245,251,.94); border-bottom-color: rgba(117,139,170,.12); box-shadow: none; }
+  .home-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: transparent; box-shadow: none; }
+  .home-button:active { background: rgba(39,102,199,.08); }
+  .home-button:focus-visible { outline: 2px solid #2766c7; outline-offset: 2px; }
+  .home-button-icon { margin: 0; font-size: 30px; line-height: 1; }
+  .home-button-label, .page-identity > span { display: none; }
+  .page-identity { min-width: 0; justify-items: center; text-align: center; }
+  .page-identity strong { max-width: 100%; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
+  .header-status { justify-content: center; width: 44px; height: 44px; }
+  .header-status-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .workspace-content { min-height: calc(100dvh - 64px - env(safe-area-inset-top)); padding-top: 16px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
 }
 </style>

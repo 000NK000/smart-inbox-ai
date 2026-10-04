@@ -23,6 +23,7 @@ public class OutlookDesktopService {
     private final RocketMQTemplate mq;
     private final ObjectMapper mapper;
     @Autowired private MailSyncIndex syncIndex;
+    @Autowired private com.smartinbox.collector.runtime.CollectorShutdownSignal shutdown = new com.smartinbox.collector.runtime.CollectorShutdownSignal();
     private Path processedFile;
     private PendingMailIndex pending;
     private final ReentrantLock syncLock = new ReentrantLock();
@@ -51,6 +52,7 @@ public class OutlookDesktopService {
         int scanned = 0, skipped = 0, fetched = 0, published = 0;
         boolean reconciled = false;
         try {
+            shutdown.check();
             pending();
             var durable = syncIndex == null ? MailSyncIndex.Snapshot.unavailable() : syncIndex.snapshot("OUTLOOK");
             reconciled = durable.available();
@@ -60,6 +62,7 @@ public class OutlookDesktopService {
             Map<String, String> selected = new LinkedHashMap<>();
             Set<String> seen = new HashSet<>();
             for (JsonNode item : metadata.messages()) {
+                shutdown.check();
                 if (Instant.parse(item.path("receivedTime").asText()).isBefore(cutoff)) continue;
                 String id = externalId(item);
                 if (!seen.add(id)) continue;
@@ -70,10 +73,12 @@ public class OutlookDesktopService {
                 selected.put(entryId, id);
             }
             if (!selected.isEmpty()) {
+                shutdown.check();
                 var full = runBridge(false, List.copyOf(selected.keySet()), cutoff);
                 if (!"connected".equals(full.state())) { report = MailSyncReport.failed("desktop", full.state()); return false; }
                 Set<String> returned = new HashSet<>();
                 for (var item : full.messages()) {
+                    shutdown.check();
                     String entry = item.path("entryId").asText();
                     if (!selected.containsKey(entry) || !selected.get(entry).equals(externalId(item))) throw new IllegalStateException("Bridge identity mismatch");
                     returned.add(entry); fetched++;
@@ -86,6 +91,8 @@ public class OutlookDesktopService {
             }
             lastSuccess = Instant.now().toString();
             report = new MailSyncReport(true, "connected", "desktop", scanned, published, fetched, skipped, "", reconciled); return true;
+        } catch (java.util.concurrent.CancellationException error) {
+            report = MailSyncReport.failed("desktop", "collector_stopping"); return false;
         } catch (Exception error) {
             report = new MailSyncReport(false, "failed", "desktop", scanned, published, fetched, skipped, "desktop_sync_failed", reconciled); return false;
         } finally { syncLock.unlock(); }
@@ -93,6 +100,7 @@ public class OutlookDesktopService {
     int publishMessages(JsonNode messages) throws Exception {
         int sent = 0;
         for (JsonNode message : messages) {
+            shutdown.check();
             String id = externalId(message);
             if (pending().recentlyPublished(id)) continue;
             if (!message.has("body") && !message.has("htmlBody")) throw new IllegalArgumentException("Full body missing");
@@ -110,6 +118,7 @@ public class OutlookDesktopService {
         return DigestUtils.md5DigestAsHex(stable.getBytes(StandardCharsets.UTF_8));
     }
     ScriptResult runBridge(boolean metadataOnly, List<String> entryIds, Instant cutoff) {
+        shutdown.check();
         if (!Files.exists(scriptPath())) return new ScriptResult("bridge_missing", mapper.createArrayNode());
         Path requestFile = null;
         try {
@@ -121,13 +130,14 @@ public class OutlookDesktopService {
                 Files.writeString(requestFile, mapper.writeValueAsString(entryIds), StandardCharsets.UTF_8);
                 command.addAll(List.of("-RequestedIdsFile", requestFile.toString()));
             }
-            String output = com.smartinbox.collector.util.BridgeProcess.capture(new ProcessBuilder(command), processedFile.getParent(), Duration.ofSeconds(90));
+            String output = com.smartinbox.collector.util.BridgeProcess.capture(new ProcessBuilder(command), processedFile.getParent(), Duration.ofSeconds(90), shutdown::isStopping);
             int start = output.indexOf('{');
             if (start < 0) return new ScriptResult("unavailable", mapper.createArrayNode());
             JsonNode json = mapper.readTree(output.substring(start));
             if (!json.path("messages").isArray()) return new ScriptResult("invalid_response", mapper.createArrayNode());
             return new ScriptResult(json.path("state").asText("unavailable"), json.path("messages"));
-        } catch (java.util.concurrent.TimeoutException error) { return new ScriptResult("timeout", mapper.createArrayNode()); }
+        } catch (java.util.concurrent.CancellationException error) { throw error; }
+        catch (java.util.concurrent.TimeoutException error) { return new ScriptResult("timeout", mapper.createArrayNode()); }
         catch (Exception error) { return new ScriptResult("unavailable", mapper.createArrayNode()); }
         finally { if (requestFile != null) try { Files.deleteIfExists(requestFile); } catch (Exception ignored) { } }
     }

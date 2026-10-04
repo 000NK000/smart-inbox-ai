@@ -42,7 +42,7 @@ class DashboardControllerTest {
             items.append(item("Other " + index, "KJCT", "https://www.kjct8.com"));
         }
         items.append(item("Impersonated", "CNN", "https://cnn.com.evil.test"));
-        items.append(item("User info", "CNN", "https://mailbox@example.com"));
+        items.append(item("User info", "CNN", "https://cnn.com@evil.test"));
         items.append(item("Invalid URL", "CNN", "not a url"));
         items.append(item("Other CNN brand", "CNN Brasil", "https://www.cnnbrasil.com.br"));
         for (int index = 0; index < 12; index++) {
@@ -122,6 +122,25 @@ class DashboardControllerTest {
         assertEquals(first, second);
         assertTrue(snapshots().load("news-cnn", DashboardController.NewsItem.class).isEmpty());
         verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
+    @Test void sequentialRefreshesWithinOneClockTickStillAttemptUpstream() throws Exception {
+        Instant fixed = Instant.parse("2026-01-01T12:00:00Z");
+        try (var clock = mockStatic(Instant.class, CALLS_REAL_METHODS)) {
+            clock.when(Instant::now).thenReturn(fixed);
+            respond(item("Good headline", "cnn.com", "https://www.cnn.com"));
+            var feeds = controller();
+            var good = feeds.retrySource("cnn");
+            when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                    .thenThrow(new IOException("offline"));
+
+            var failed = feeds.retrySource("cnn");
+
+            assertEquals(good.items(), failed.items());
+            assertEquals(good.updatedAt(), failed.updatedAt());
+            assertEquals("实时源暂不可用，正在显示最近缓存", failed.status());
+            verify(http, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        }
     }
 
     @Test void overlappingExplicitRefreshesShareOneUpstreamRequest() throws Exception {

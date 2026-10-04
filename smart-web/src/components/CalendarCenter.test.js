@@ -158,7 +158,7 @@ test('new events use clicked day, month renders 42 cells and Escape restores foc
 test('unrelated edits preserve seconds and fractional precision even within one minute', async () => {
   const app = await mountCalendar()
   try {
-    const original = { ...app.data.definition, startLocal: app.data.day + 'T09:00:15.234567891', endLocal: app.data.day + 'T09:00:45.987654321' }
+    const original = { ...app.data.definition, startLocal: app.data.day + 'T09:00:15.271828182', endLocal: app.data.day + 'T09:00:45.987654321' }
     app.vm.definitions = [original]
     app.vm.openItem(app.data.occurrence); await tick()
     assert.equal(document.querySelector('.event-form input[placeholder]').maxLength, 300)

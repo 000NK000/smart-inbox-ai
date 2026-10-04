@@ -47,3 +47,20 @@ export function createDemoAdapter(fixtures = createFixtures()) {
     return { status: 200, statusText: 'OK', data: structuredClone(data), headers: {}, config }
   }
 }
+
+// The public preview has no phone identity or live runtime. Supply only the
+// two boot-time reads; every other Fetch call remains isolated from the network.
+export function createDemoFetch() {
+  return async (input, options = {}) => {
+    const url = typeof input === 'string' ? input : input.url
+    const method = (options.method || input?.method || 'GET').toUpperCase()
+    const contexts = {
+      '/api/mobile/context': { mobile: false },
+      '/api/runtime/status': { mode: 'active', message: 'Read-only demo' },
+    }
+    if (method !== 'GET' || !Object.hasOwn(contexts, url)) {
+      throw new Error('Network requests are disabled in the sample workspace.')
+    }
+    return new Response(JSON.stringify(contexts[url]), { headers: { 'Content-Type': 'application/json' } })
+  }
+}

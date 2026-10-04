@@ -183,7 +183,7 @@ public class DashboardController {
 
     private final Map<String,MediaSourceResult> sourceHealth = new ConcurrentHashMap<>();
     private final Map<String,Object> sourceLocks = new ConcurrentHashMap<>();
-    private final Map<String,Instant> sourceAttemptFinished = new ConcurrentHashMap<>();
+    private final Map<String,Long> sourceRevisions = new ConcurrentHashMap<>();
     private final Map<String,Instant> sourceRetryAfter = new ConcurrentHashMap<>();
     public List<MediaSourceResult> sourceStatus() { return List.copyOf(sourceHealth.values()); }
     public MediaSourceResult retrySource(String id) {
@@ -191,16 +191,17 @@ public class DashboardController {
             .orElseThrow(()->new ResponseStatusException(HttpStatus.BAD_REQUEST,"Unknown news source")),true);
     }
     private MediaSourceResult loadMediaSource(MediaFeed feed, boolean refresh) {
-        Instant requestedAt = Instant.now();
+        long observedRevision = sourceRevisions.getOrDefault(feed.id(), 0L);
         synchronized (sourceLocks.computeIfAbsent(feed.id(), ignored -> new Object())) {
-            Instant finished = sourceAttemptFinished.get(feed.id());
             MediaSourceResult previous = sourceHealth.get(feed.id());
             // Requests queued during an upstream fetch share its result, including explicit refreshes.
-            if (finished != null && !finished.isBefore(requestedAt) && previous != null) {
+            // Revisions distinguish sequential requests even when the wall clock has not advanced.
+            if (sourceRevisions.getOrDefault(feed.id(), 0L) != observedRevision && previous != null) {
                 return previous;
             }
             var value = readMediaSource(feed, refresh);
             sourceHealth.put(feed.id(), value);
+            sourceRevisions.put(feed.id(), observedRevision + 1);
             return value;
         }
     }
@@ -238,8 +239,6 @@ public class DashboardController {
             sourceRetryAfter.put(feed.id(), Instant.now().plus(SOURCE_RETRY_DELAY));
             LOGGER.warn("Unable to refresh news source {}: {}", feed.id(), error.toString());
             return unavailableMediaSource(feed, cached);
-        } finally {
-            sourceAttemptFinished.put(feed.id(), Instant.now());
         }
     }
 

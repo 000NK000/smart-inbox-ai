@@ -36,7 +36,7 @@ services:
     image: apache/rocketmq:5.1.0
     container_name: smart-rmqnamesrv
     ports:
-      - "9876:9876"
+      - "127.0.0.1:${SMART_INBOX_NAMESRV_PORT:-29876}:9876"
     command: sh mqnamesrv
     restart: unless-stopped
 
@@ -46,13 +46,13 @@ services:
     ports:
       # Keep the host and broker ports identical: clients use the advertised address.
       # Avoid the Windows reserved range that can include 10909-10912.
-      - "127.0.0.1:30911:30911"
-      - "127.0.0.1:30909:30909"
+      - "127.0.0.1:${SMART_INBOX_BROKER_PORT:-30911}:${SMART_INBOX_BROKER_PORT:-30911}"
+      - "127.0.0.1:${SMART_INBOX_BROKER_VIP_PORT:-30909}:${SMART_INBOX_BROKER_VIP_PORT:-30909}"
     environment:
       - NAMESRV_ADDR=rmqnamesrv:9876
     command: sh mqbroker -n rmqnamesrv:9876 -c /etc/rocketmq/broker.conf
     volumes:
-      - ./broker.conf:/etc/rocketmq/broker.conf
+      - ${SMART_INBOX_BROKER_CONFIG:-./broker.conf}:/etc/rocketmq/broker.conf
       - rocketmq-store:/home/rocketmq/store
     depends_on:
       - rmqnamesrv

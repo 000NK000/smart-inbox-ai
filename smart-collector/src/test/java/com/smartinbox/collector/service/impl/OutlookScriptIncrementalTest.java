@@ -17,6 +17,15 @@ class OutlookScriptIncrementalTest {
         Path script = Path.of("..", "scripts", "read-outlook-mail.ps1").toAbsolutePath().normalize();
         if (!Files.exists(script)) script = Path.of("scripts", "read-outlook-mail.ps1").toAbsolutePath().normalize();
         assertTrue(Files.exists(script));
+        // Keep the real mail-reading script, but isolate its session boundary.
+        // Never consult or launch the user's Outlook during a regression test.
+        Path isolatedScript = directory.resolve("read-outlook-mail.ps1");
+        Files.copy(script, isolatedScript);
+        Files.writeString(directory.resolve("outlook-session.ps1"), """
+            function Connect-OutlookSession {
+                return @{ state = 'connected'; application = $global:fixtureApplication }
+            }
+            """);
         Path ids = directory.resolve("ids.json"); Files.writeString(ids, "[\"new\"]");
         String fixture = """
             param([string]$Script, [string]$Ids, [string]$Metadata)
@@ -56,7 +65,7 @@ class OutlookScriptIncrementalTest {
         Path runner = directory.resolve("fixture.ps1"); Files.writeString(runner, fixture);
         for (String metadata : new String[]{"True", "False"}) {
             var command = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", runner.toString(),
-                    "-Script", script.toString(), "-Ids", ids.toString(), "-Metadata", metadata);
+                    "-Script", isolatedScript.toString(), "-Ids", ids.toString(), "-Metadata", metadata);
             String output = BridgeProcess.capture(command, directory, Duration.ofSeconds(20));
             var json = new ObjectMapper().readTree(output);
             assertEquals("connected", json.path("state").asText(), output);

@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRuntimeControl } from './runtime-control.mjs'
+import { createRuntimeControl, runtimePlugin } from './runtime-control.mjs'
 
 const root = () => mkdtempSync(join(tmpdir(), 'smart-inbox-runtime-test-'))
 function request(control, method, url, headers = {}, remoteAddress = '127.0.0.1') {
@@ -71,4 +71,43 @@ test('Docker port binding failures explain the conflict and remain retryable', a
   assert.equal(control.transition('resume'), true)
   await settle()
   assert.equal(control.snapshot().mode, 'error')
+})
+
+test('Vite identifies the desktop before proxying or standby gating with the same local security checks', () => {
+  const directory = root()
+  createRuntimeControl(directory, async () => {})
+  for (const mode of ['active', 'standby', 'error']) {
+    writeFileSync(join(directory, '.smart-inbox/runtime/state.json'), JSON.stringify({ mode }))
+    let middleware
+    runtimePlugin(directory).configureServer({ middlewares: { use(handler) { middleware = handler } } })
+    const control = { middleware }
+    for (const method of ['GET', 'HEAD']) {
+      const response = request(control, method, '/api/mobile/context')
+      assert.equal(response.code, 200); assert.deepEqual(response.data, { mobile: false }); assert.equal(response.passed, false)
+    }
+    assert.equal(request(control, 'GET', '/api/mobile/context', { origin: 'https://evil.example' }).code, 403)
+    assert.equal(request(control, 'GET', '/api/mobile/context', { host: 'evil.example:5173' }).code, 403)
+    assert.equal(request(control, 'GET', '/api/mobile/context', { 'sec-fetch-site': 'cross-site' }).code, 403)
+    assert.equal(request(control, 'GET', '/api/mobile/context', { 'sec-fetch-site': 'same-site' }).code, 403)
+    assert.equal(request(control, 'GET', '/api/mobile/context', {}, '192.168.1.1').code, 403)
+    if (mode !== 'active') assert.equal(request(control, 'GET', '/api/tasks').code, 503)
+  }
+})
+
+test('failed lifecycle listeners are logged without stranding standby or rejecting after-transition work', async () => {
+  const directory = root()
+  const actions = []
+  const control = createRuntimeControl(directory, async (_root, action) => { actions.push(action) })
+  control.addLifecycleListener({
+    beforeTransition: async () => { throw new Error('Before hook failed') },
+    afterTransition: async () => { throw new Error('After hook failed') }
+  })
+  control.transition('standby'); await settle()
+  assert.equal(control.snapshot().mode, 'standby')
+  control.transition('resume'); await settle()
+  assert.equal(control.snapshot().mode, 'active')
+  assert.deepEqual(actions, ['standby', 'resume'])
+  const log = readFileSync(join(directory, '.smart-inbox/runtime/errors.log'), 'utf8')
+  assert.match(log, /Before hook failed/)
+  assert.match(log, /After hook failed/)
 })

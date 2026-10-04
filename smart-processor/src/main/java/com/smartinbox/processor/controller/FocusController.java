@@ -13,14 +13,15 @@ public class FocusController {
     private final FocusService focus;
     public FocusController(FocusService focus) { this.focus = focus; }
     @GetMapping public FocusService.Overview overview(@RequestParam(required = false) String zone) { return focus.overview(zone); }
-    @PostMapping("/start") public FocusService.Overview start(@RequestBody Start body) { return focus.start(body.category(), body.taskId(), body.zone()); }
-    @PostMapping("/stop") public FocusService.Overview stop(@RequestBody Stop body) { return focus.stop(body.id(), body.zone()); }
-    @PutMapping("/limit") public FocusService.Overview limit(@RequestBody Limit body) { return focus.setLimit(body.minutes(), body.zone()); }
+    @PostMapping("/presence") public FocusService.PresenceState presence(@RequestBody Presence body) { return focus.presence(body.runtimeId(), body.zone()); }
+    @PostMapping("/presence/stop") public FocusService.PresenceState stopPresence(@RequestBody Presence body) { return focus.stopPresence(body.runtimeId(), body.zone()); }
+    @PostMapping("/switch") public FocusService.Overview switchCategory(@RequestBody Switch body) { return focus.switchCategory(body.id(), body.zone()); }
+    @RequestMapping(value = {"/start", "/stop", "/limit"}, method = {RequestMethod.POST, RequestMethod.PUT})
+    public void retired() { throw new ResponseStatusException(HttpStatus.GONE, "计时已改为有效 / 无效时间，请刷新软件"); }
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<?> error(ResponseStatusException error) {
         return ResponseEntity.status(error.getStatusCode()).body(Map.of("message", Objects.requireNonNullElse(error.getReason(), "请求失败")));
     }
-    public record Start(String category, String taskId, String zone) { }
-    public record Stop(String id, String zone) { }
-    public record Limit(Integer minutes, String zone) { }
+    public record Presence(String runtimeId, String zone) { }
+    public record Switch(String id, String zone) { }
 }

@@ -3,6 +3,10 @@ import core from './core.en.js'
 import productivity from './productivity.en.js'
 import discovery from './discovery.en.js'
 import tools from './tools.en.js'
+import stocks from './stocks.en.js'
+import mobile from './mobile.en.js'
+import mobileShell from './mobileShell.en.js'
+import focus from './focus.en.js'
 
 export const LANGUAGE_STORAGE_KEY = 'smart-inbox.ui-language'
 const supported = value => value === 'en-US' ? 'en-US' : 'zh-CN'
@@ -13,7 +17,7 @@ function savedLocale() {
 const currentLocale = ref(savedLocale())
 export const locale = readonly(currentLocale)
 export const dateLocale = computed(() => currentLocale.value)
-const english = { ...core, ...productivity, ...discovery, ...tools }
+const english = { ...core, ...productivity, ...discovery, ...tools, ...stocks, ...mobile, ...mobileShell, ...focus }
 
 // Only explicitly marked interface messages pass through this dictionary.
 // Mail bodies, news, AI reports and personal notes never enter a translator.

@@ -3,11 +3,54 @@ package com.smartinbox.collector.task;
 import com.smartinbox.collector.service.*;
 import com.smartinbox.collector.service.impl.*;
 import org.junit.jupiter.api.Test;
+import com.smartinbox.collector.runtime.CollectorShutdownSignal;
+import org.springframework.test.util.ReflectionTestUtils;
 import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class SourceRetryTest {
+    @Test void shutdownStopsNextSourceAndNewRetriesWithoutInterruptingCurrentWork() {
+        var email = mock(EmailService.class); var signal = new CollectorShutdownSignal();
+        var task = new EmailCollectorTask(email, mock(OutlookGraphService.class), mock(OutlookDesktopService.class), mock(OutlookOAuthService.class), new SourceHealthService());
+        ReflectionTestUtils.setField(task, "shutdown", signal);
+        when(email.fetchSource("GMAIL")).thenAnswer(call -> {
+            signal.stop();
+            assertFalse(Thread.currentThread().isInterrupted());
+            return new MailSyncReport(true, "connected", "imap", 0, 0, 0, 0, "", true);
+        });
+        try {
+            task.collectEmails();
+            verify(email).fetchSource("GMAIL"); verify(email, never()).fetchSource("QQMAIL");
+            assertFalse(task.retry("GMAIL")); assertFalse(task.syncDesktop());
+        } finally { task.close(); }
+    }
+    @Test void cancelledGraphNeverFallsBackToDesktop() {
+        var graph = mock(OutlookGraphService.class); var desktop = mock(OutlookDesktopService.class);
+        var oauth = mock(OutlookOAuthService.class); when(oauth.isConnected()).thenReturn(true);
+        var signal = new CollectorShutdownSignal();
+        var task = new EmailCollectorTask(mock(EmailService.class), graph, desktop, oauth, new SourceHealthService());
+        ReflectionTestUtils.setField(task, "shutdown", signal);
+        when(graph.fetchRecentEmails()).thenAnswer(call -> { signal.stop(); return false; });
+        try { assertFalse(task.syncSource("OUTLOOK")); verifyNoInteractions(desktop); }
+        finally { task.close(); }
+    }
+    @Test void closingWaitsForAnActiveManualRetryWithoutInterruptingIt() throws Exception {
+        var email = mock(EmailService.class); var started = new CountDownLatch(1); var release = new CountDownLatch(1);
+        when(email.fetchSource("GMAIL")).thenAnswer(call -> {
+            started.countDown(); assertTrue(release.await(5, TimeUnit.SECONDS));
+            assertFalse(Thread.currentThread().isInterrupted());
+            return new MailSyncReport(true, "connected", "imap", 1, 1, 1, 0, "", true);
+        });
+        var task = new EmailCollectorTask(email, mock(OutlookGraphService.class), mock(OutlookDesktopService.class), mock(OutlookOAuthService.class), new SourceHealthService());
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            assertTrue(task.retry("GMAIL")); assertTrue(started.await(2, TimeUnit.SECONDS));
+            var closing = executor.submit(task::close);
+            assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+            release.countDown(); closing.get(2, TimeUnit.SECONDS);
+        } finally { release.countDown(); task.close(); executor.shutdownNow(); }
+    }
     @Test void manualAndScheduledSyncShareGuardAndRetryOnlyRequestedChannel() throws Exception {
         var email = mock(EmailService.class); var graph = mock(OutlookGraphService.class); var desktop = mock(OutlookDesktopService.class);
         var oauth = mock(OutlookOAuthService.class); var health = new SourceHealthService();

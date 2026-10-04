@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { createFocusPresence } from './focus-presence.mjs'
 
 // This controller lives in the small web process, outside the Java services it stops.
 export function createRuntimeControl(root, execute = runPowerShell) {
@@ -15,6 +16,17 @@ export function createRuntimeControl(root, execute = runPowerShell) {
     state = { mode: 'error', message: '上次切换被中断，请点击恢复运行。' }
   }
   let busy = false
+  const lifecycle = new Set()
+  const notify = async (name, action) => {
+    for (const listener of lifecycle) {
+      try { await listener[name]?.(action) }
+      catch (error) {
+        // Auxiliary listeners cannot strand a runtime transition or create an
+        // unhandled rejection. Focus also has its backend expiry as a fallback.
+        try { appendFileSync(join(directory, 'errors.log'), `${new Date().toISOString()} ${name}: ${error.stack || error}\n`) } catch { /* unavailable log storage */ }
+      }
+    }
+  }
   function save(mode, message) {
     state = { mode, message, updatedAt: new Date().toISOString() }
     writeFileSync(file + '.tmp', JSON.stringify(state))
@@ -26,7 +38,8 @@ export function createRuntimeControl(root, execute = runPowerShell) {
     if ((action === 'standby' && state.mode === 'standby') || (action === 'resume' && state.mode === 'active')) return true
     busy = true
     save(action === 'standby' ? 'entering' : 'resuming', action === 'standby' ? '正在保存数据并释放资源…' : '正在恢复后台服务…')
-    Promise.resolve().then(() => execute(root, action, message => save(state.mode, message)))
+    Promise.resolve().then(() => notify('beforeTransition', action))
+      .then(() => execute(root, action, message => save(state.mode, message)))
       .then(() => save(action === 'standby' ? 'standby' : 'active', action === 'standby' ? '已停止后台服务并卸载本项目 AI 模型' : '正常运行'))
       .catch(error => {
         appendFileSync(join(directory, 'errors.log'), `${new Date().toISOString()} ${error.stack || error}\n`)
@@ -34,7 +47,10 @@ export function createRuntimeControl(root, execute = runPowerShell) {
         save('error', portFailure
           ? '后台端口被占用或被 Windows 保留，邮件队列无法启动。需要调整端口配置后恢复运行；详情见 .smart-inbox/runtime/errors.log。'
           : '切换未完成。请点击恢复运行重试，详情见 .smart-inbox/runtime/errors.log。')
-      }).finally(() => { busy = false })
+      }).finally(async () => {
+        busy = false
+        await notify('afterTransition', action)
+      })
     return true
   }
   function json(res, code, value) {
@@ -43,7 +59,8 @@ export function createRuntimeControl(root, execute = runPowerShell) {
   }
   function middleware(req, res, next) {
     const path = req.url?.split('?')[0]
-    if (!path?.startsWith('/api/runtime')) {
+    const desktopContext = ['GET', 'HEAD'].includes(req.method) && path === '/api/mobile/context'
+    if (!path?.startsWith('/api/runtime') && !desktopContext) {
       if (path?.startsWith('/api/') && state.mode !== 'active') return json(res, 503, { message: '项目正在待机或恢复', standby: true })
       return next()
     }
@@ -52,7 +69,9 @@ export function createRuntimeControl(root, execute = runPowerShell) {
     const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
     if (!local || !['127.0.0.1:5173', 'localhost:5173'].includes(host)) return json(res, 403, { message: '仅支持本机访问' })
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return json(res, 403, { message: '来源不匹配' })
-    if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { message: '禁止跨站请求' })
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (desktopContext && req.headers['sec-fetch-site'] === 'same-site')) return json(res, 403, { message: '禁止跨站请求' })
+    // Vite uses this middleware too; identifying the desktop cannot depend on Java or runtime mode.
+    if (desktopContext) return json(res, 200, { mobile: false })
     if (req.method === 'GET' && path === '/api/runtime/status') return json(res, 200, snapshot())
     if (req.method !== 'POST' || !['/api/runtime/standby', '/api/runtime/resume'].includes(path)) return json(res, 404, { message: '接口不存在' })
     const supplied = Buffer.from(String(req.headers['x-runtime-token'] || ''))
@@ -61,7 +80,7 @@ export function createRuntimeControl(root, execute = runPowerShell) {
     if (!transition(path.endsWith('/standby') ? 'standby' : 'resume')) return json(res, 409, snapshot())
     return json(res, 202, snapshot())
   }
-  return { middleware, snapshot, transition }
+  return { middleware, snapshot, transition, addLifecycleListener(listener) { lifecycle.add(listener); return () => lifecycle.delete(listener) } }
 }
 
 function runPowerShell(root, action, progress) {
@@ -80,6 +99,19 @@ function runPowerShell(root, action, progress) {
   })
 }
 
-export function runtimePlugin(root) {
-  return { name: 'smart-inbox-runtime', configureServer(server) { server.middlewares.use(createRuntimeControl(resolve(root)).middleware) } }
+export function runtimePlugin(root, options = {}) {
+  return { name: 'smart-inbox-runtime', configureServer(server) {
+    const runtime = options.runtime || createRuntimeControl(resolve(root))
+    const focus = createFocusPresence(runtime, options.focusOptions)
+    server.middlewares.use(runtime.middleware)
+    // Middleware-only previews have no listening server and must not start work.
+    if (server.httpServer) {
+      server.httpServer.once('listening', () => {
+        // Vite can silently choose another port while the desktop app owns 5173.
+        // That preview must not replace the real desktop's active time session.
+        if (server.httpServer.address()?.port === 5173) void focus.start()
+      })
+      server.httpServer.once('close', () => { void focus.close() })
+    }
+  } }
 }

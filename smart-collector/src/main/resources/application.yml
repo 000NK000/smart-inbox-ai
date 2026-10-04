@@ -23,7 +23,7 @@ spring:
             enable: true
 
 rocketmq:
-  name-server: 127.0.0.1:9876
+  name-server: ${SMART_INBOX_NAMESRV_ADDRESS:127.0.0.1:29876}
   producer:
     group: email-collector-group
     send-message-timeout: 60000

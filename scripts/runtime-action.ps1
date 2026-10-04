@@ -3,13 +3,22 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $projectRoot
-$localConfig = Join-Path $projectRoot 'config.local.ps1'
-if (Test-Path -LiteralPath $localConfig) { . $localConfig }
 $runtimeDir = Join-Path $projectRoot '.smart-inbox\runtime'
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 $operationLock = [IO.File]::Open((Join-Path $runtimeDir 'operation.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 $optional = @('mysql','milvus','etcd','minio','grafana','prometheus','rmqdashboard','nacos')
 $required = @('redis','rmqnamesrv','rmqbroker')
+. "$PSScriptRoot\runtime-shutdown.ps1"
+
+function Invoke-ShutdownStage([string]$Name, [scriptblock]$Work) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $succeeded = $false
+    try { & $Work; $succeeded = $true }
+    finally {
+        $entry = @{ at = [DateTime]::UtcNow.ToString('o'); stage = $Name; seconds = [Math]::Round($timer.Elapsed.TotalSeconds, 3); success = $succeeded } | ConvertTo-Json -Compress
+        [IO.File]::AppendAllText((Join-Path $runtimeDir 'shutdown-timing.log'), $entry + [Environment]::NewLine)
+    }
+}
 
 function Owned-Java([string]$Module) {
     $jar = Join-Path $projectRoot "smart-$Module\target\smart-$Module-1.0.0-SNAPSHOT.jar"
@@ -22,29 +31,11 @@ function Stop-ServiceGracefully([string]$Module) {
         $deadline = (Get-Date).AddSeconds(240)
         while (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue) {
             if ((Get-Date) -gt $deadline) { throw "Timed out waiting for $Module to save and stop. No process was forcibly killed." }
-            Start-Sleep -Seconds 1
+            Start-Sleep -Milliseconds 500
         }
     }
 }
-function Stop-Containers([string[]]$Services) {
-    # Stop only containers whose Compose working directory matches this checkout.
-    $ids = @(& docker ps -aq --filter 'label=com.docker.compose.project=smart-inbox-ai')
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot contact Docker Desktop.' }
-    $ownedIds = @()
-    foreach ($id in $ids) {
-        $info = (& docker inspect $id | ConvertFrom-Json)[0]
-        $labels = $info.Config.Labels
-        if ($labels.'com.docker.compose.project.working_dir' -ine $projectRoot) { continue }
-        if ($labels.'com.docker.compose.service' -in $Services -and $info.State.Running) { $ownedIds += $id }
-    }
-    if ($ownedIds.Count) {
-        & docker update --restart unless-stopped @ownedIds
-        if ($LASTEXITCODE -ne 0) { throw 'Could not preserve manual stop policy.' }
-        & docker stop --time 60 @ownedIds
-        if ($LASTEXITCODE -ne 0) { throw 'A project container could not stop.' }
-    }
-}
-
+try {
 if ($Action -eq 'resume') {
     Write-Output 'PROGRESS:正在启动邮件队列和后台服务…'
     & "$PSScriptRoot\start-smart-inbox.ps1" -SkipBuild -NoBrowser -BackendOnly
@@ -52,13 +43,15 @@ if ($Action -eq 'resume') {
     Write-Output 'PROGRESS:后台服务已就绪，邮件将自动补同步'
     exit 0
 }
-if ($Action -eq 'cleanup') { Stop-Containers $optional; exit 0 }
+if ($Action -eq 'cleanup') { Stop-ProjectContainersGracefully $projectRoot $optional; exit 0 }
 
+Invoke-ShutdownStage 'total' {
 Write-Output 'PROGRESS:正在停止收信，并等待本地数据保存…'
-Stop-ServiceGracefully 'gateway'
-Stop-ServiceGracefully 'collector'
-Stop-ServiceGracefully 'processor'
+Invoke-ShutdownStage 'gateway' { Stop-ServiceGracefully 'gateway' }
+Invoke-ShutdownStage 'collector' { Stop-ServiceGracefully 'collector' }
+Invoke-ShutdownStage 'processor' { Stop-ServiceGracefully 'processor' }
 Write-Output 'PROGRESS:正在卸载 AI 模型，释放内存和显存…'
+Invoke-ShutdownStage 'model' {
 # Read the model name from this project's config; never kill all Ollama processes/models.
 $modelLine = Get-Content "$projectRoot\smart-processor\src\main\resources\application.yml" | Where-Object { $_ -match '^\s+model:\s*qwen' } | Select-Object -First 1
 if (-not $modelLine) { throw 'Project AI model configuration was not found.' }
@@ -79,6 +72,9 @@ if (@($loaded.models | Where-Object name -eq $model).Count) {
     } while ((Get-Date) -lt $deadline)
     if ($remaining.Count) { throw 'AI model is still loaded; another application may be using it.' }
 }
+}
 Write-Output 'PROGRESS:正在停止本项目容器…'
-Stop-Containers ($optional + $required)
+Invoke-ShutdownStage 'containers' { Stop-ProjectContainersGracefully $projectRoot ($optional + $required) }
 Write-Output 'PROGRESS:待机完成，关闭开关即可恢复'
+}
+} finally { $operationLock.Dispose() }

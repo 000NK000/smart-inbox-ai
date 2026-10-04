@@ -27,6 +27,7 @@ public class OutlookGraphService {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
     private final ReentrantLock lock = new ReentrantLock();
     @Autowired private MailSyncIndex syncIndex;
+    @Autowired private com.smartinbox.collector.runtime.CollectorShutdownSignal shutdown = new com.smartinbox.collector.runtime.CollectorShutdownSignal();
     private Path processedFile;
     private PendingMailIndex pending;
     private volatile MailSyncReport report = MailSyncReport.failed("oauth", "not_started");
@@ -45,6 +46,7 @@ public class OutlookGraphService {
         int scanned = 0, published = 0, fetched = 0, skipped = 0;
         boolean reconciled = false;
         try {
+            shutdown.check();
             Optional<String> token = oauth.accessToken();
             if (token.isEmpty()) { report = MailSyncReport.failed("oauth", "authorization_required"); return false; }
             var durable = syncIndex == null ? MailSyncIndex.Snapshot.unavailable() : syncIndex.snapshot("OUTLOOK");
@@ -56,11 +58,13 @@ public class OutlookGraphService {
                     + "&$orderby=receivedDateTime%20desc&$top=100";
             Set<String> pages = new HashSet<>(), seen = new HashSet<>();
             do {
+                shutdown.check();
                 validateGraphUrl(url);
                 if (!pages.add(url)) throw new IllegalStateException("repeated_continuation");
                 JsonNode page = readGraph(url, token.get());
                 if (!page.path("value").isArray()) throw new IllegalStateException("invalid_metadata");
                 for (JsonNode metadata : page.path("value")) {
+                    shutdown.check();
                     if (Instant.parse(metadata.path("receivedDateTime").asText()).isBefore(cutoff)) continue;
                     String id = externalId(metadata);
                     if (!seen.add(id)) continue;
@@ -78,6 +82,8 @@ public class OutlookGraphService {
             } while (!url.isBlank());
             report = new MailSyncReport(true, "connected", "oauth", scanned, published, fetched, skipped, "", reconciled);
             return true;
+        } catch (java.util.concurrent.CancellationException error) {
+            report = MailSyncReport.failed("oauth", "collector_stopping"); return false;
         } catch (Exception error) {
             if (error instanceof InterruptedException) Thread.currentThread().interrupt();
             report = new MailSyncReport(false, "failed", "oauth", scanned, published, fetched, skipped,
@@ -88,6 +94,7 @@ public class OutlookGraphService {
 
     /** Overridable transport for fixtures; no response bodies/tokens in logs. */
     JsonNode readGraph(String url, String token) throws Exception {
+        shutdown.check();
         validateGraphUrl(url);
         HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30))
                 .header("Authorization", "Bearer " + token).header("Accept", "application/json")
@@ -111,6 +118,7 @@ public class OutlookGraphService {
     int publishMessages(JsonNode messages) throws Exception {
         int sent = 0;
         for (var message : messages) {
+            shutdown.check();
             String id = externalId(message);
             if (pending().recentlyPublished(id)) continue;
             if (!message.path("body").has("content")) throw new IllegalArgumentException("Full body missing");

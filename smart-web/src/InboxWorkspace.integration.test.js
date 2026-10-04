@@ -14,6 +14,9 @@ Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.
 window.scrollTo = () => {}
 const Vue = await import('vue')
 const i18n = await import('./i18n/index.js')
+const focusController = await import('./stores/focusController.js')
+const focusShortcut = await import('./utils/focusShortcut.js')
+const focusTime = await import('./utils/focusTime.js')
 const philosophyQuotes = await import('./utils/philosophyQuotes.js')
 const { readPreview, savePreview } = await import('./utils/previewCache.js')
 const tick = async () => { for (let i = 0; i < 20; i++) { await Promise.resolve(); await Vue.nextTick() } }
@@ -85,6 +88,10 @@ async function mountWorkspace(overrides = {}) {
   }
   const modules = {
     './i18n/index.js': i18n,
+    './stores/focusController.js': focusController,
+    './utils/focusShortcut.js': focusShortcut,
+    '../stores/focusController.js': focusController,
+    '../utils/focusTime.js': focusTime,
     '../i18n/index.js': i18n,
     '../utils/philosophyQuotes.js': philosophyQuotes,
     vue: Vue, axios,
@@ -94,10 +101,14 @@ async function mountWorkspace(overrides = {}) {
     './stores/taskStore': { useTaskStore: () => ({ summary: Vue.ref({ open: 0 }), refresh: async () => {} }) },
     './utils/previewCache': { readPreview, savePreview }
   }
+  if (overrides.realFocus) {
+    const focus = compile(await readFile(new URL('./components/FocusCenter.vue', import.meta.url), 'utf8'), modules)
+    modules['./utils/asyncPanel.js'].createAsyncPanel = loader => String(loader).includes('FocusCenter.vue') ? focus : panel
+  }
   modules['./components/MainDashboard.vue'] = compile(await readFile(new URL('./components/MainDashboard.vue', import.meta.url), 'utf8'), modules)
   const component = compile(await readFile(new URL('./InboxWorkspace.vue', import.meta.url), 'utf8'), modules,
     'navigate, fetchSummaries, loadMoreMail, openMailDetail, closeMailDetail, selectedMail, mailDetailLoading, analyzeSelectedMail, mailInsightResult, mailInsightLoading, enableNotifications, remindersEnabled, reminderSettingBusy, markMailRead, mailPlanRevision, selectMailView')
-  const app = Vue.createApp(component)
+  const app = Vue.createApp(component, overrides.props || {})
   const vm = app.mount('#root')
   await tick()
   return { vm, calls, messages, timers, cleanup() {
@@ -149,6 +160,33 @@ test('language switch updates the dashboard and mail interface without translati
     assert.ok(philosophyQuotes.chinesePhilosophyQuotes.some(quote => document.querySelector('.quote-block h1').textContent.includes(quote.text)))
     assert.equal(context.calls.length, callsBeforeReturn)
   } finally { context.cleanup(); i18n.setLocale('zh-CN') }
+})
+
+test('phone navigation hides local administration and mail refresh never calls Outlook control endpoints', async () => {
+  const context = await mountWorkspace({ props: { mobile: true } })
+  try {
+    assert.equal(document.querySelector('.credentials-shortcut'), null)
+    assert.equal(document.querySelector('.mobile-entry'), null)
+    assert.equal(document.querySelector('.today-strip').textContent.includes('运行状态与备份'), false)
+    for (const route of ['credentials', 'operations', 'mobile-connection']) { context.vm.navigate(route); await tick(); assert.ok(document.querySelector('.dashboard-shell')) }
+    context.vm.navigate('mail'); await tick()
+    document.querySelector('.refresh-button').click(); await tick()
+    assert.equal(context.calls.some(call => call.url.startsWith('/api/outlook/')), false)
+    assert.equal(document.querySelector('.mail-source-notice'), null)
+    assert.match(document.querySelector('.mail-sync-status').textContent, /邮件采集在电脑运行/)
+    assert.ok(context.calls.some(call => call.url === '/api/mails/summaries'))
+  } finally { context.cleanup() }
+})
+
+test('desktop mobile connection card opens the setup panel and has an English label', async () => {
+  const context = await mountWorkspace()
+  try {
+    const entry = document.querySelector('.mobile-entry'); assert.ok(entry)
+    i18n.setLocale('en-US'); await tick()
+    assert.match(entry.textContent, /Mobile connection/)
+    entry.click(); await tick()
+    assert.match(document.querySelector('.page-identity').textContent, /Mobile connection/)
+  } finally { context.cleanup() }
 })
 
 test('marking mail read from planner detail reloads suggestions and closes detail', async () => {
@@ -245,6 +283,95 @@ test('focus home entry opens the timer workspace and returns using main menu', a
     assert.ok(document.querySelector('.focus-entry'))
     assert.equal(document.querySelector('.workspace-header'), null)
   } finally { context.cleanup() }
+})
+
+function focusSnapshot() {
+  const now = Date.now(), today = focusTime.localDay(now, Intl.DateTimeFormat().resolvedOptions().timeZone)
+  return { serverNow: now, today, daily: { EFFECTIVE: 0, INEFFECTIVE: 0 }, historyDays: [], active: { id: 'session-0', category: 'INEFFECTIVE', leaseUntil: now + 45000 } }
+}
+function enter(target = window, options = {}) { return target.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })) }
+
+test('one Enter owner switches on home and other pages, shares Focus state, and detaches on workspace exit', async () => {
+  const state = focusSnapshot(); let writes = 0
+  const context = await mountWorkspace({ realFocus: true,
+    get: url => url === '/api/focus' ? { data: structuredClone(state) } : undefined,
+    post(url, body) {
+      if (url !== '/api/focus/switch') return
+      assert.equal(body.id, state.active.id)
+      state.active.category = state.active.category === 'EFFECTIVE' ? 'INEFFECTIVE' : 'EFFECTIVE'
+      state.active.id = `session-${++writes}`
+      return { data: structuredClone(state) }
+    }
+  })
+  try {
+    assert.equal(context.calls.some(call => call.url.startsWith('/api/focus')), false, 'Startup makes no extra timer request')
+    for (const route of ['home', 'mail', 'tasks', 'calendar', 'practice', 'stocks', 'focus', 'home']) {
+      context.vm.navigate(route); await tick()
+      const before = writes
+      assert.equal(enter(), false); await tick()
+      assert.equal(writes, before + 1, `Exactly one switch on ${route}`)
+      if (route === 'focus') assert.equal(document.querySelector('.focus-center').dataset.focusState, state.active.category)
+      else {
+        assert.match(document.querySelector('.focus-shortcut-notice').textContent, /已切换为/)
+        assert.ok(document.querySelector('.focus-shortcut-notice').classList.contains(state.active.category.toLowerCase()))
+      }
+    }
+    i18n.setLocale('en-US'); await tick()
+    assert.match(document.querySelector('.focus-shortcut-notice').textContent, /Switched to/)
+    assert.equal(context.calls.filter(call => call.method === 'get' && call.url === '/api/focus').length, 2, 'Only initial shortcut and focus mount fetch records')
+  } finally { context.cleanup(); i18n.setLocale('zh-CN') }
+  enter(); await tick(); assert.equal(writes, 8)
+})
+
+test('app shortcut preserves text entry, IME, normal controls, mail-card Enter, dialogs and standby', async () => {
+  const state = focusSnapshot(); let writes = 0
+  const context = await mountWorkspace({ get: url => url === '/api/focus' ? { data: state } : undefined, post: url => url === '/api/focus/switch' ? (writes++, { data: state }) : undefined })
+  const holder = document.createElement('div'); document.body.append(holder)
+  try {
+    for (const markup of ['<input>', '<textarea></textarea>', '<select></select>', '<button>Action</button>', '<a href="#">Link</a>', '<div contenteditable="true"><span>Text</span></div>', '<div role="combobox">Choose</div>', '<article tabindex="0">Open</article>', '<details><summary>Expand</summary></details>']) {
+      holder.innerHTML = markup
+      enter(holder.querySelector('span, summary') || holder.firstChild)
+    }
+    holder.innerHTML = ''
+    for (const options of [{ repeat: true }, { isComposing: true }, { keyCode: 229 }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }, { metaKey: true }]) enter(window, options)
+    const prevented = new window.KeyboardEvent('keydown', { key: 'Enter', cancelable: true }); prevented.preventDefault(); window.dispatchEvent(prevented)
+    document.querySelector('#root').setAttribute('inert', ''); enter(); document.querySelector('#root').removeAttribute('inert')
+    holder.innerHTML = '<section role="dialog" aria-modal="true">Visible dialog</section>'; enter(); holder.innerHTML = ''
+    context.vm.navigate('mail'); await tick()
+    enter(document.querySelector('.mail-card')); await tick()
+    assert.ok(document.querySelector('.mail-detail-sheet'), 'Mail-card Enter keeps its original action')
+    enter(); await tick()
+    assert.equal(writes, 0)
+    assert.equal(context.calls.some(call => call.url.startsWith('/api/focus')), false)
+    context.vm.closeMailDetail(); await tick()
+    holder.innerHTML = '<div style="display:none"><section role="dialog">Hidden dialog</section></div>'
+    enter(); await tick(); assert.equal(writes, 1, 'Hidden retained dialogs do not block the shortcut')
+  } finally { holder.remove(); document.querySelector('#root').removeAttribute('inert'); context.cleanup() }
+})
+
+test('pending lazy focus read blocks a second Enter and late read after workspace exit cannot switch', async () => {
+  const pending = deferred()
+  const context = await mountWorkspace({ get: url => url === '/api/focus' ? pending.promise : undefined })
+  enter(); enter(); await tick()
+  assert.equal(context.calls.filter(call => call.url === '/api/focus').length, 1)
+  assert.match(document.querySelector('.focus-shortcut-notice').textContent, /正在切换/)
+  context.cleanup()
+  pending.resolve({ data: focusSnapshot() }); await tick()
+  assert.equal(context.calls.some(call => call.url === '/api/focus/switch'), false)
+  assert.equal(document.querySelector('.focus-shortcut-notice'), null)
+})
+
+test('standby during a lazy read clears its pending notice without sending a switch', async () => {
+  const pending = deferred()
+  const context = await mountWorkspace({ get: url => url === '/api/focus' ? pending.promise : undefined })
+  try {
+    enter(); await tick()
+    assert.ok(document.querySelector('.focus-shortcut-notice'))
+    document.querySelector('#root').setAttribute('inert', '')
+    pending.resolve({ data: focusSnapshot() }); await tick()
+    assert.equal(context.calls.some(call => call.url === '/api/focus/switch'), false)
+    assert.equal(document.querySelector('.focus-shortcut-notice'), null)
+  } finally { document.querySelector('#root').removeAttribute('inert'); context.cleanup() }
 })
 
 test('practice home entry opens the practice workspace and returns using main menu', async () => {

@@ -9,16 +9,16 @@
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot 'outlook-session.ps1')
 
 function Write-Result([string]$State, [array]$Messages = @()) {
     [pscustomobject]@{ state = $State; messages = @($Messages) } | ConvertTo-Json -Depth 5 -Compress
 }
 
 try {
-    # Do not rely on a single Office-version registry path here. A working
-    # Outlook MAPI profile can be registered elsewhere, and the COM session is
-    # the authoritative availability check.
-    $application = New-Object -ComObject Outlook.Application
+    $connection = Connect-OutlookSession
+    if ($connection.state -ne 'connected') { Write-Result $connection.state; exit 0 }
+    $application = $connection.application
     $session = $application.GetNamespace('MAPI')
     $account = @($session.Accounts | Where-Object { $_.SmtpAddress -ieq $Email } | Select-Object -First 1)
     if (-not $account) {

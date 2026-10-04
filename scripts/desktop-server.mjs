@@ -3,17 +3,21 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { resolve, sep, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRuntimeControl } from './runtime-control.mjs'
+import { createMobileAccess } from './mobile-access.mjs'
+import { createFocusPresence } from './focus-presence.mjs'
 
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' }
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json' }
 export function createDesktopServer(root, options = {}) {
   const dist = resolve(root, 'smart-web/dist')
   const runtime = options.runtime || createRuntimeControl(root)
   const gatewayPort = options.gatewayPort || 8080
-  return createServer((req, res) => {
+  const focus = createFocusPresence(runtime, { gatewayPort, ...options.focusOptions })
+  const mobile = createMobileAccess(root, { ...options.mobileOptions, runtime, gatewayPort })
+  const server = createServer((req, res) => {
     if (!['127.0.0.1:5173', 'localhost:5173'].includes(req.headers.host) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) {
       res.writeHead(403); res.end('Local access only'); return
     }
-    runtime.middleware(req, res, () => {
+    mobile.handleAdmin(req, res, () => runtime.middleware(req, res, () => {
       if (req.url.startsWith('/api/')) {
         const upstream = request({ hostname: '127.0.0.1', port: gatewayPort, path: req.url, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${gatewayPort}` }, timeout: 180000 }, incoming => {
           res.writeHead(incoming.statusCode, incoming.headers); incoming.pipe(res)
@@ -38,12 +42,27 @@ export function createDesktopServer(root, options = {}) {
       if (req.method === 'HEAD') { res.end(); return }
       const stream = createReadStream(file)
       stream.on('error', () => res.destroy()); stream.pipe(res)
-    })
+    }))
   })
+  server.mobileAccess = mobile
+  server.focusPresence = focus
+  server.on('listening', () => { void mobile.start(); void focus.start() })
+  server.on('close', () => { void mobile.close(); void focus.close() })
+  return server
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
   const server = createDesktopServer(root)
+  let closing = false
+  const shutdown = async () => {
+    if (closing) return
+    closing = true
+    await server.focusPresence.close()
+    await server.mobileAccess.close()
+    server.close()
+  }
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
   server.on('error', error => { console.error(error.message); process.exitCode = 1 })
   server.listen(5173, '127.0.0.1', () => console.log('Smart Inbox desktop server ready: http://127.0.0.1:5173'))
 }

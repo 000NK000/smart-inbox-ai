@@ -60,7 +60,7 @@ public class BackupService {
         var states=em.createQuery("select new com.smartinbox.processor.service.BackupService$MailState(m.id,m.source,m.externalId,coalesce(m.inboxRead,false),coalesce(m.starred,false),m.snoozedUntil) from MailSummary m where m.externalId is not null order by m.id",MailState.class).getResultList();
         var settings=new TreeMap<String,String>(); preferences.findAll().forEach(p->settings.put(p.getName(),p.getValue()));
         long exportedAt=System.currentTimeMillis();
-        var focus=focusSessions.findAll().stream().map(s->{var copy=new FocusSession();copy.setId(s.getId());copy.setCategory(s.getCategory());copy.setTaskId(s.getTaskId());copy.setStartedAt(s.getStartedAt());copy.setEndedAt(s.getEndedAt()==null?exportedAt:s.getEndedAt());return copy;}).toList();
+        var focus=focusSessions.findAll().stream().map(s->{var copy=new FocusSession();copy.setId(s.getId());copy.setCategory(s.getCategory());copy.setTaskId(s.getTaskId());copy.setStartedAt(s.getStartedAt());copy.setEndedAt(FocusService.accountedEnd(s,exportedAt));return copy;}).toList();
         var delays=new TreeMap<String,Integer>();tasks.list().forEach(t->{if(t.getRescheduleCount()>0)delays.put(t.getId(),t.getRescheduleCount());});
         var solutionStates=practiceSolutions.findAll().stream().sorted(Comparator.comparing(PracticeSolution::getNumber))
                 .map(solution->new SolutionState(solution.getNumber(),solution.getContent(),solution.getUpdatedAt())).toList();
@@ -77,7 +77,7 @@ public class BackupService {
         if(file.schema()>=4){
             if(p.focusSessions()==null||p.rescheduleCounts()==null||p.focusSessions().size()>50000||p.rescheduleCounts().size()>10000)throw bad("专注备份条数无效");
             var focusIds=new HashSet<String>();
-            for(var s:p.focusSessions())if(s==null||!valid(s.getId(),36)||!focusIds.add(s.getId())||!Set.of("JOB","FRENCH","COURSE","ENTERTAINMENT").contains(s.getCategory())||s.getStartedAt()==null||s.getEndedAt()==null||s.getStartedAt()<0||s.getEndedAt()<s.getStartedAt()||s.getEndedAt()>4102444800000L||(s.getTaskId()!=null&&s.getTaskId().length()>80))throw bad("专注记录无效或重复");
+            for(var s:p.focusSessions())if(s==null||!valid(s.getId(),36)||!focusIds.add(s.getId())||!Set.of("JOB","FRENCH","COURSE","ENTERTAINMENT","EFFECTIVE","INEFFECTIVE").contains(s.getCategory())||s.getStartedAt()==null||s.getEndedAt()==null||s.getStartedAt()<0||s.getEndedAt()<s.getStartedAt()||s.getEndedAt()>4102444800000L||(s.getTaskId()!=null&&s.getTaskId().length()>80))throw bad("专注记录无效或重复");
             var taskIds=new HashSet<String>();p.tasks().forEach(t->taskIds.add(t.id()));
             p.rescheduleCounts().forEach((id,count)->{if(!taskIds.contains(id)||count==null||count<0||count>10000)throw bad("延期次数无效");});
         }

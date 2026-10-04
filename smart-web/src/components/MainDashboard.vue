@@ -13,7 +13,7 @@
         </div>
       </header>
 
-      <section class="today-strip"><button type="button" @click="$emit('navigate','today')"><b>{{ t("今日安排 ›") }}</b><span>{{ t("今日到期") }} {{ todaySummary?.dueToday || 0 }} {{ t("· 已逾期") }} {{ todaySummary?.overdue || 0 }} {{ t("· 即将到期") }} {{ todaySummary?.upcoming || 0 }}</span></button><button type="button" @click="$emit('navigate','operations')">{{ t("运行状态与备份 ⚙") }}</button></section>
+      <section class="today-strip"><button type="button" @click="$emit('navigate','today')"><b>{{ t("今日安排 ›") }}</b><span>{{ t("今日到期") }} {{ todaySummary?.dueToday || 0 }} {{ t("· 已逾期") }} {{ todaySummary?.overdue || 0 }} {{ t("· 即将到期") }} {{ todaySummary?.upcoming || 0 }}</span></button><button v-if="!mobile" type="button" @click="$emit('navigate','operations')">{{ t("运行状态与备份 ⚙") }}</button></section>
       <section class="hub-entry-grid">
       <button class="calendar-entry" type="button" @click="$emit('navigate', 'calendar')">
         <span class="calendar-entry-icon" aria-hidden="true">▦</span>
@@ -27,7 +27,7 @@
       </button>
       <button class="calendar-entry focus-entry" type="button" @click="$emit('navigate', 'focus')">
         <span class="calendar-entry-icon focus-entry-icon" aria-hidden="true">◷</span>
-        <span class="calendar-entry-copy"><small>FOCUS & WEEKLY REVIEW</small><strong>{{ t("专注与每周复盘") }}</strong><span>{{ t("招工 · 法语 · 课程计时 · 娱乐倒计时") }}</span></span>
+        <span class="calendar-entry-copy"><small>FOCUS & WEEKLY REVIEW</small><strong>{{ t("专注与每周复盘") }}</strong><span>{{ t("有效 / 无效时间 · Enter 切换 · 每日记录") }}</span></span>
         <span class="calendar-entry-hint">{{ t("每日时间记录") }} <b>{{ t("打开计时 ↗") }}</b></span>
       </button>
       <button class="calendar-entry practice-entry" type="button" @click="$emit('navigate', 'practice')">
@@ -35,6 +35,12 @@
         <span class="calendar-entry-copy"><small>JAVA · INTERVIEW PREP</small><strong>{{ t("刷题进度与熟练度") }}</strong><span>{{ t("自主记录 · 两档水平 · 随机抽弱题") }}</span></span>
         <span class="calendar-entry-hint">{{ t("建议题单可选") }} <b>{{ t("打开我的题库 ↗") }}</b></span>
       </button>
+      <button class="calendar-entry stocks-entry" type="button" @click="$emit('navigate', 'stocks')">
+        <span class="calendar-entry-icon stocks-entry-icon" aria-hidden="true">▥</span>
+        <span class="calendar-entry-copy"><small>PORTFOLIO & RESEARCH</small><strong>{{ t("股票中心") }}</strong><span>{{ t("持仓快照 · 自选股票 · 中文研究报告") }}</span></span>
+        <span class="calendar-entry-hint">{{ t("IBKR 与 GPT") }} <b>{{ t("打开股票中心 ↗") }}</b></span>
+      </button>
+      <button v-if="!mobile" class="calendar-entry mobile-entry" type="button" @click="$emit('navigate', 'mobile-connection')"><span class="calendar-entry-icon mobile-entry-icon" aria-hidden="true">▯</span><span class="calendar-entry-copy"><small>PRIVATE MOBILE ACCESS</small><strong>{{ t('手机连接') }}</strong><span>{{ t('iPhone · 私人连接 · 配对设备') }}</span></span><span class="calendar-entry-hint"><b>{{ t('连接我的手机 ↗') }}</b></span></button>
       </section>
       <section class="widget-grid">
         <button class="widget weather-widget" type="button" @click="$emit('navigate', 'weather')">
@@ -121,7 +127,7 @@
 
       <footer class="dashboard-footer">
         <div class="dashboard-power"><slot name="standby" /></div>
-        <button class="credentials-shortcut" type="button" :aria-label="t('密钥管理')" @click="$emit('navigate', 'credentials')">
+        <button v-if="!mobile" class="credentials-shortcut" type="button" :aria-label="t('密钥管理')" @click="$emit('navigate', 'credentials')">
           <span class="credentials-icon" aria-hidden="true">⌘</span><small>{{ t("密钥") }}</small>
         </button>
         <div class="dashboard-language" role="group" :aria-label="t('界面语言')">
@@ -141,6 +147,7 @@ import { computed } from 'vue'
 import { usePhilosophyQuote } from '../utils/philosophyQuotes.js'
 
 const props = defineProps({
+  mobile: { type: Boolean, default: false },
   weather: { type: Object, required: true },
   trendPlatforms: { type: Array, default: () => [] },
   worldNews: { type: Array, default: () => [] },
@@ -179,8 +186,10 @@ const watchPreview = computed(() => ({
 </script>
 
 <style scoped>
+.mobile-entry{background:linear-gradient(115deg,#fafcff,#e7edf7)}.mobile-entry-icon{background:linear-gradient(145deg,#7c9cad,#4e6f91);font-size:35px}
 .hub-entry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;gap:16px;margin:0 0 22px}.calendar-entry,.career-entry{display:flex;align-items:center;gap:18px;width:100%;padding:20px 24px;border:1px solid #fff;border-radius:24px;text-align:left;color:#244268;background:linear-gradient(115deg,#fdfefe,#e3edff);box-shadow:0 10px 28px #38577f0b;cursor:pointer}.career-entry{background:linear-gradient(115deg,#fffdf9,#fff0de)}.calendar-entry:hover{background:linear-gradient(115deg,#fff,#d8e7ff)}.career-entry:hover{background:linear-gradient(115deg,#fff,#ffe5c7)}.calendar-entry:focus-visible,.career-entry:focus-visible{outline:3px solid #689df0;outline-offset:3px}.calendar-entry-icon,.career-entry-icon{display:grid;place-items:center;flex-shrink:0;width:57px;height:57px;border-radius:17px;background:linear-gradient(145deg,#669cf9,#456cd5);color:white;font-size:34px}.career-entry-icon{background:linear-gradient(145deg,#ff9b57,#e6603d)}.calendar-entry-copy{display:grid;gap:5px;min-width:0}.calendar-entry-copy small{font-size:9px;letter-spacing:1.5px;color:#7990b0;font-weight:800}.calendar-entry-copy strong{font-size:20px}.calendar-entry-copy>span{font-size:12px;color:#7183a1}.calendar-entry-hint{display:grid;gap:7px;margin-left:auto;text-align:right;font-size:11px;color:#7183a1;white-space:nowrap}.calendar-entry-hint b{font-size:13px;color:#4167a8}@media(max-width:900px){.hub-entry-grid{grid-template-columns:1fr}}@media(max-width:620px){.calendar-entry,.career-entry{gap:12px;padding:17px 14px}.calendar-entry-copy strong{font-size:17px}.calendar-entry-hint{font-size:0}.calendar-entry-hint b{font-size:11px}.calendar-entry-icon,.career-entry-icon{width:44px;height:48px;font-size:29px}}
 .practice-entry{background:linear-gradient(115deg,#fbfdff,#e7f6f2)}.practice-entry:hover{background:linear-gradient(115deg,#fff,#d9f2e9)}.practice-entry-icon{background:linear-gradient(145deg,#46b8a3,#2e7fb0);font-size:23px}
+.stocks-entry{background:linear-gradient(115deg,#fbfdfb,#e3eee3)}.stocks-entry:hover{background:linear-gradient(115deg,#fff,#d7e9dc)}.stocks-entry-icon{background:linear-gradient(145deg,#7aa88f,#377866);font-size:30px}
 .today-strip{display:flex;justify-content:space-between;gap:16px;margin:0 0 24px;flex-wrap:wrap}.today-strip button{display:flex;gap:18px;align-items:center;flex-wrap:wrap;border:1px solid #ffffffb0;background:#ffffff9a;color:#315781;padding:14px 20px;border-radius:16px}.today-strip span{font-size:13px}
 .dashboard-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 20px; margin-top: 22px; }
 .dashboard-power { grid-column: 1; justify-self: start; }

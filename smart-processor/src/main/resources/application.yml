@@ -66,8 +66,8 @@ spring:
 #        collection-name: email_vector_store
 
 rocketmq:
-  name-server: 127.0.0.1:9876
-  nameServer: 127.0.0.1:9876 # CamelCase alias often required by some versions
+  name-server: ${SMART_INBOX_NAMESRV_ADDRESS:127.0.0.1:29876}
+  nameServer: ${SMART_INBOX_NAMESRV_ADDRESS:127.0.0.1:29876} # CamelCase alias often required by some versions
   consumer:
     group: email-processor-group-v4
 

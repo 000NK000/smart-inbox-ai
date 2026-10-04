@@ -2,17 +2,13 @@ import axios from 'axios'
 import { createApp, h } from 'vue'
 import 'element-plus/dist/index.css'
 import '../style.css'
-import { createDemoAdapter } from './fixtures.js'
+import { createDemoAdapter, createDemoFetch } from './fixtures.js'
 import { setLocale } from '../i18n/index.js'
 
 // Install a fail-closed transport before importing the actual application.
 // No demo requests ever fall back to the collector, runtime controller or LLM.
 axios.defaults.adapter = createDemoAdapter()
-window.fetch = async input => {
-  const url = typeof input === 'string' ? input : input.url
-  if (url === '/api/runtime/status') return new Response(JSON.stringify({ mode: 'active', message: 'Read-only demo' }), { headers: { 'Content-Type': 'application/json' } })
-  throw new Error('Network requests are disabled in the sample workspace.')
-}
+window.fetch = createDemoFetch()
 if (navigator.geolocation) Object.defineProperty(navigator.geolocation, 'getCurrentPosition', {
   value: (_success, failure) => failure?.({ code: 1, message: 'Location is disabled in demo mode.' }), configurable: true,
 })

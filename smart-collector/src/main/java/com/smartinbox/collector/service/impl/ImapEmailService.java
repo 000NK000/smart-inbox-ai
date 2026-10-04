@@ -62,6 +62,7 @@ public class ImapEmailService implements EmailService {
     private final Set<String> processedEmailIds = Collections.synchronizedSet(new HashSet<>());
     private Path processedFilePath;
     @org.springframework.beans.factory.annotation.Autowired private MailSyncIndex syncIndex;
+    @org.springframework.beans.factory.annotation.Autowired private com.smartinbox.collector.runtime.CollectorShutdownSignal shutdown = new com.smartinbox.collector.runtime.CollectorShutdownSignal();
     private final Map<String, PendingMailIndex> pendingBySource = new HashMap<>();
 
     public ImapEmailService(RocketMQTemplate rocketMQTemplate, CredentialVaultService credentialVault) {
@@ -179,6 +180,7 @@ public class ImapEmailService implements EmailService {
 
     @Override
     public synchronized MailSyncReport fetchSource(String source) {
+        shutdown.check();
         if (!Set.of("GMAIL", "QQMAIL").contains(source)) throw new IllegalArgumentException("Unknown IMAP channel");
         long cutoffMs = System.currentTimeMillis() - WINDOW_HOURS * 3600_000L;
         Date cutoffDate = new Date(cutoffMs);
@@ -196,6 +198,7 @@ public class ImapEmailService implements EmailService {
         int published = 0;
         String failure = scan.failure;
         for (Candidate c : candidates) {
+            shutdown.check();
             try {
                 rocketMQTemplate.convertAndSend(MQ_TOPIC, c.dto);
                 pending(source).published(c.uniqueId);
@@ -227,10 +230,12 @@ public class ImapEmailService implements EmailService {
         Store store = null;
         Folder inbox = null;
         try {
+            shutdown.check();
             Session session = Session.getInstance(props);
             store = session.getStore(protocol);
             store.connect(account.host, account.username, account.password);
 
+            shutdown.check();
             inbox = store.getFolder("INBOX");
             inbox.open(Folder.READ_ONLY);
 
@@ -248,12 +253,14 @@ public class ImapEmailService implements EmailService {
             logger.info("[{}] Date-window query returned: {}", account.sourceName, messages.length);
 
             for (Message message : messages) {
+                shutdown.check();
                 long emailTimeMs = extractEmailTimeMillis(message);
                 if (emailTimeMs < cutoffMs)
                     continue; // 本地兜底过滤
                 scanned++;
 
                 String subject = safeDecode(message.getSubject());
+                shutdown.check();
                 String sender = "";
                 try {
                     Address[] from = message.getFrom();
@@ -269,8 +276,11 @@ public class ImapEmailService implements EmailService {
 
                 EmailParser.Body body;
                 try {
+                    shutdown.check();
                     body = EmailParser.parse(message);
                     fetched++;
+                } catch (java.util.concurrent.CancellationException e) {
+                    throw e;
                 } catch (Exception e) {
                     failure = "body_parse_failed";
                     continue;
@@ -288,6 +298,8 @@ public class ImapEmailService implements EmailService {
             inbox.close(false);
             store.close();
 
+        } catch (java.util.concurrent.CancellationException e) {
+            failure = "collector_stopping";
         } catch (Exception e) {
             failure = e instanceof AuthenticationFailedException ? "authentication_failed" : "imap_sync_failed";
         } finally {
